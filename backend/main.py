@@ -4,7 +4,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 import os
-
+from schemas import (
+    UsuarioCreate,
+    LoginCreate,
+    ProcessoCreate,
+    ClienteCreate,
+    FinanceiroCreate,
+    PagamentoCreate,
+    AgendaCreate,
+)
 from database import SessionLocal, engine
 import models
 from security import hash_senha, verificar_senha, criar_token, get_usuario_logado
@@ -64,18 +72,18 @@ def home():
 
 
 @app.post("/usuarios")
-def criar_usuario(email: str, senha: str, tipo: str, db: Session = Depends(get_db)):
-    if tipo not in ["advogado", "secretario", "cliente"]:
+def criar_usuario(dados: UsuarioCreate, db: Session = Depends(get_db)):
+    if dados.tipo not in ["advogado", "secretario", "cliente"]:
         raise HTTPException(status_code=400, detail="Tipo inválido")
 
-    existe = db.query(models.Usuario).filter(models.Usuario.email == email).first()
+    existe = db.query(models.Usuario).filter(models.Usuario.email == dados.email).first()
     if existe:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
 
     usuario = models.Usuario(
-        email=email,
-        senha=hash_senha(senha),
-        tipo=tipo
+        email=dados.email,
+        senha=hash_senha(dados.senha),
+        tipo=dados.tipo
     )
 
     db.add(usuario)
@@ -86,13 +94,13 @@ def criar_usuario(email: str, senha: str, tipo: str, db: Session = Depends(get_d
 
 
 @app.post("/login")
-def login(email: str, senha: str, db: Session = Depends(get_db)):
-    usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
+def login(dados: LoginCreate, db: Session = Depends(get_db)):
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == dados.email).first()
 
     if not usuario:
         raise HTTPException(status_code=400, detail="Usuário não encontrado")
 
-    if not verificar_senha(senha, usuario.senha):
+    if not verificar_senha(dados.senha, usuario.senha):
         raise HTTPException(status_code=400, detail="Senha incorreta")
 
     token = criar_token({"sub": usuario.email})
@@ -122,20 +130,17 @@ def listar_processos(email: str = Depends(get_usuario_logado), db: Session = Dep
 
 @app.post("/processos")
 def criar_processo(
-    titulo: str,
-    descricao: str,
-    status: str,
-    categoria: str = "Outros",
+    dados: ProcessoCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
     usuario = get_usuario_obj(email, db)
 
     processo = models.Processo(
-        titulo=titulo,
-        descricao=descricao,
-        status=status,
-        categoria=categoria,
+        titulo=dados.titulo,
+        descricao=dados.descricao,
+        status=dados.status,
+        categoria=dados.categoria,
         dono_email=usuario.email,
         data_criacao=datetime.utcnow(),
         data_atualizacao=datetime.utcnow()
@@ -151,10 +156,7 @@ def criar_processo(
 @app.put("/processos/{id}")
 def editar_processo(
     id: int,
-    titulo: str,
-    descricao: str,
-    status: str,
-    categoria: str = "Outros",
+    dados: ProcessoCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
@@ -167,10 +169,10 @@ def editar_processo(
     if usuario.tipo not in ["advogado", "secretario"] and processo.dono_email != usuario.email:
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    processo.titulo = titulo
-    processo.descricao = descricao
-    processo.status = status
-    processo.categoria = categoria
+    processo.titulo = dados.titulo
+    processo.descricao = dados.descricao
+    processo.status = dados.status
+    processo.categoria = dados.categoria
     processo.data_atualizacao = datetime.utcnow()
 
     db.commit()
@@ -237,11 +239,7 @@ def listar_clientes(email: str = Depends(get_usuario_logado), db: Session = Depe
 
 @app.post("/clientes")
 def criar_cliente(
-    nome: str,
-    email_cliente: str,
-    telefone: str,
-    cpf_cnpj: str,
-    observacoes: str,
+    dados: ClienteCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
@@ -249,11 +247,11 @@ def criar_cliente(
     exigir_equipe(usuario)
 
     cliente = models.Cliente(
-        nome=nome,
-        email=email_cliente,
-        telefone=telefone,
-        cpf_cnpj=cpf_cnpj,
-        observacoes=observacoes
+        nome=dados.nome,
+        email=dados.email_cliente,
+        telefone=dados.telefone,
+        cpf_cnpj=dados.cpf_cnpj,
+        observacoes=dados.observacoes
     )
 
     db.add(cliente)
@@ -314,31 +312,22 @@ def listar_financeiro(email: str = Depends(get_usuario_logado), db: Session = De
 
 @app.post("/financeiro")
 def criar_financeiro(
-    cliente: str,
-    processo: str,
-    valor_total: float,
-    valor_pago: float,
-    vencimento: str,
-    status: str,
-    dono_email: str,
-    categoria: str = "Outros",
+    dados: FinanceiroCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
     usuario = get_usuario_obj(email, db)
     exigir_equipe(usuario)
 
-    status_auto = calcular_status_financeiro(valor_total, valor_pago)
-
     item = models.Financeiro(
-        cliente=cliente,
-        processo=processo,
-        categoria=categoria,
-        valor_total=valor_total,
-        valor_pago=valor_pago,
-        vencimento=vencimento,
-        status=status_auto,
-        dono_email=dono_email
+        cliente=dados.cliente,
+        processo=dados.processo,
+        categoria=dados.categoria,
+        valor_total=dados.valor_total,
+        valor_pago=dados.valor_pago,
+        vencimento=dados.vencimento,
+        status=calcular_status_financeiro(dados.valor_total, dados.valor_pago),
+        dono_email=dados.dono_email
     )
 
     db.add(item)
@@ -351,14 +340,7 @@ def criar_financeiro(
 @app.put("/financeiro/{id}")
 def editar_financeiro(
     id: int,
-    cliente: str,
-    processo: str,
-    valor_total: float,
-    valor_pago: float,
-    vencimento: str,
-    status: str,
-    dono_email: str,
-    categoria: str = "Outros",
+    dados: FinanceiroCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
@@ -370,14 +352,14 @@ def editar_financeiro(
     if not item:
         raise HTTPException(status_code=404, detail="Registro financeiro não encontrado")
 
-    item.cliente = cliente
-    item.processo = processo
-    item.categoria = categoria
-    item.valor_total = valor_total
-    item.valor_pago = valor_pago
-    item.vencimento = vencimento
-    item.status = calcular_status_financeiro(valor_total, valor_pago)
-    item.dono_email = dono_email
+    item.cliente = dados.cliente
+    item.processo = dados.processo
+    item.categoria = dados.categoria
+    item.valor_total = dados.valor_total
+    item.valor_pago = dados.valor_pago
+    item.vencimento = dados.vencimento
+    item.status = calcular_status_financeiro(dados.valor_total, dados.valor_pago)
+    item.dono_email = dados.dono_email
 
     db.commit()
     db.refresh(item)
@@ -388,7 +370,7 @@ def editar_financeiro(
 @app.put("/financeiro/{id}/pagar")
 def pagar_financeiro(
     id: int,
-    valor: float,
+    dados: PagamentoCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
@@ -400,7 +382,7 @@ def pagar_financeiro(
     if not item:
         raise HTTPException(status_code=404, detail="Registro financeiro não encontrado")
 
-    item.valor_pago = (item.valor_pago or 0) + valor
+    item.valor_pago = (item.valor_pago or 0) + dados.valor
     item.status = calcular_status_financeiro(item.valor_total, item.valor_pago)
 
     db.commit()
@@ -437,12 +419,7 @@ def listar_agenda(email: str = Depends(get_usuario_logado), db: Session = Depend
 
 @app.post("/agenda")
 def criar_agenda(
-    titulo: str,
-    tipo: str,
-    data_inicio: str,
-    data_fim: str,
-    processo: str,
-    observacoes: str,
+    dados: AgendaCreate,
     email: str = Depends(get_usuario_logado),
     db: Session = Depends(get_db)
 ):
@@ -450,12 +427,12 @@ def criar_agenda(
     exigir_equipe(usuario)
 
     item = models.Agenda(
-        titulo=titulo,
-        tipo=tipo,
-        data_inicio=data_inicio,
-        data_fim=data_fim,
-        processo=processo,
-        observacoes=observacoes
+        titulo=dados.titulo,
+        tipo=dados.tipo,
+        data_inicio=dados.data_inicio,
+        data_fim=dados.data_fim,
+        processo=dados.processo,
+        observacoes=dados.observacoes
     )
 
     db.add(item)
